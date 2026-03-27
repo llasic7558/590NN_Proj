@@ -1,0 +1,32 @@
+{
+    "model_name": "bert-base-uncased",
+    "corpus": {
+        "target_total": 2000,
+        "agreement_per_paradigm": 120,
+        "negation_per_paradigm": 200,
+        "clause_pairs": 400,
+        "seed": 42
+    },
+    "extraction": {
+        "max_length": 128,
+        "batch_log_every": 100
+    },
+    "probing": {
+        "n_folds": 5,
+        "max_iter": 1000,
+        "C": 1.0,
+        "pooling": "cls"
+    },
+    "cka": {
+        "pooling": "cls"
+    },
+    "ablation": {
+        "n_layers": 12,
+        "n_heads": 12
+    },
+    "finetuning": {
+        "num_epochs": 3,
+        "batch_size": 16,
+        "learning_rate": 2e-5
+    }
+}
