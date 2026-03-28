@@ -78,7 +78,9 @@ class LinearProbe:
             y_pred = clf.predict(X_val)
 
             accs.append(accuracy_score(y_val, y_pred))
-            f1s.append(f1_score(y_val, y_pred, average="binary"))
+            n_classes = len(set(y))
+            avg = "binary" if n_classes == 2 else "weighted"
+            f1s.append(f1_score(y_val, y_pred, average=avg))
 
         return ProbeResult(
             layer=layer,
