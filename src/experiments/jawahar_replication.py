@@ -52,15 +52,25 @@ SENTEVAL_TASKS = {
 }
 
 
+PARQUET_BASE = (
+    "https://huggingface.co/datasets/tasksource/linguisticprobing"
+    "/resolve/refs%2Fconvert%2Fparquet"
+)
+
+
 def load_senteval_task(task_name: str, max_samples: int = 10000) -> tuple[list[str], np.ndarray]:
     """
-    Load a SentEval probing task from HuggingFace.
+    Load a SentEval probing task from HuggingFace parquet files.
 
     Returns:
         sentences: list of sentence strings
         labels: np.array of integer labels
     """
-    ds = load_dataset("tasksource/linguisticprobing", task_name)
+    data_files = {
+        split: f"{PARQUET_BASE}/{task_name}/{split}/0000.parquet"
+        for split in ["train", "validation", "test"]
+    }
+    ds = load_dataset("parquet", data_files=data_files)
 
     sentences, labels = [], []
     for split in ["train", "validation", "test"]:
