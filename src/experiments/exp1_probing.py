@@ -85,6 +85,71 @@ def run_probing_experiment(
 
         all_results[phenom] = layer_results
 
+    # ── Summary tables ──
+    print(f"\n{'='*80}")
+    print("SUMMARY: Full results table")
+    print(f"{'='*80}")
+    for phenom, layer_results in sorted(all_results.items()):
+        print(f"\n  [{phenom.upper()}] ({layer_results[0].n_samples} samples)")
+        print(f"  {'Layer':>5}  {'Accuracy':>8}  {'± Std':>7}  {'F1':>6}  {'Control':>7}  {'Selectivity':>11}")
+        print(f"  {'-'*5}  {'-'*8}  {'-'*7}  {'-'*6}  {'-'*7}  {'-'*11}")
+        for r in layer_results:
+            print(f"  {r.layer:5d}  {r.accuracy:8.3f}  {r.accuracy_std:7.3f}  {r.f1:6.3f}  "
+                  f"{r.control_accuracy:7.3f}  {r.selectivity:11.3f}")
+
+    # ── Key findings ──
+    print(f"\n{'='*80}")
+    print("KEY FINDINGS")
+    print(f"{'='*80}")
+    for phenom, layer_results in sorted(all_results.items()):
+        best = max(layer_results, key=lambda r: r.accuracy)
+        worst = min(layer_results, key=lambda r: r.accuracy)
+
+        # Find where accuracy first exceeds 0.6 (above chance)
+        first_useful = next((r for r in layer_results if r.accuracy > 0.6), None)
+
+        # Find biggest jump between adjacent layers
+        biggest_jump_layer = 0
+        biggest_jump = 0
+        for i in range(1, len(layer_results)):
+            jump = layer_results[i].accuracy - layer_results[i-1].accuracy
+            if jump > biggest_jump:
+                biggest_jump = jump
+                biggest_jump_layer = i
+
+        print(f"\n  [{phenom.upper()}]")
+        print(f"    Peak accuracy:     {best.accuracy:.3f} at layer {best.layer}")
+        print(f"    Lowest accuracy:   {worst.accuracy:.3f} at layer {worst.layer}")
+        print(f"    Best selectivity:  {max(r.selectivity for r in layer_results):.3f} "
+              f"at layer {max(layer_results, key=lambda r: r.selectivity).layer}")
+        if first_useful:
+            print(f"    First useful (>0.6): layer {first_useful.layer} ({first_useful.accuracy:.3f})")
+        else:
+            print(f"    First useful (>0.6): never reaches 0.6")
+        print(f"    Biggest jump:      +{biggest_jump:.3f} from layer {biggest_jump_layer-1}→{biggest_jump_layer}")
+        if layer_results[-1].accuracy < best.accuracy - 0.01:
+            print(f"    ⚠ Layer 12 drop:   {best.accuracy:.3f} → {layer_results[-1].accuracy:.3f} "
+                  f"({best.accuracy - layer_results[-1].accuracy:.3f} decrease from peak)")
+
+    # ── Cross-phenomenon comparison ──
+    print(f"\n{'='*80}")
+    print("CROSS-PHENOMENON COMPARISON (accuracy at each layer)")
+    print(f"{'='*80}")
+    phenoms_sorted = sorted(all_results.keys())
+    header = f"  {'Layer':>5}" + "".join(f"  {p:>12}" for p in phenoms_sorted)
+    print(header)
+    print(f"  {'-'*5}" + "".join(f"  {'-'*12}" for _ in phenoms_sorted))
+    for layer in range(NUM_LAYERS):
+        row = f"  {layer:5d}"
+        for phenom in phenoms_sorted:
+            acc = all_results[phenom][layer].accuracy
+            # Mark the peak layer for each phenomenon
+            peak = max(r.accuracy for r in all_results[phenom])
+            marker = " ★" if acc == peak else "  "
+            row += f"  {acc:10.3f}{marker}"
+        print(row)
+    print(f"\n  ★ = peak layer for that phenomenon")
+
     # Save results
     results_data = {}
     for phenom, results in all_results.items():
