@@ -60,14 +60,14 @@ def load_senteval_task(task_name: str, max_samples: int = 10000) -> tuple[list[s
         sentences: list of sentence strings
         labels: np.array of integer labels
     """
-    ds = load_dataset("gokuls/senteval_probes", task_name)
+    ds = load_dataset("tasksource/linguisticprobing", task_name)
 
     sentences, labels = [], []
     for split in ["train", "validation", "test"]:
         if split not in ds:
             continue
         for row in ds[split]:
-            sentences.append(row["text"])
+            sentences.append(row["sentence"])
             labels.append(row["label"])
             if len(sentences) >= max_samples:
                 break
