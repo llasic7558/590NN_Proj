@@ -195,6 +195,10 @@ def run_cka_experiment(
     hidden_states_dir: Path = None,
     metadata_path: Path = None,
     pooling: str = "cls",
+    results_dir: Path = None,
+    figures_dir: Path = None,
+    results_filename: str = "cka_results.json",
+    label: str = None,
 ):
     """
     Run the full CKA preserve-or-rewrite analysis.
@@ -205,14 +209,23 @@ def run_cka_experiment(
     4. Identify rewriting events
     5. Compare against Exp 1 probing peaks
     6. Save results and generate plots
+
+    `results_dir` / `figures_dir` override the default Exp 2 output paths,
+    used by Exp 4 to write fine-tuned-model CKA results separately.
     """
     if hidden_states_dir is None:
         hidden_states_dir = PROCESSED_DIR / "hidden_states"
     if metadata_path is None:
         metadata_path = hidden_states_dir / "metadata.json"
+    if results_dir is None:
+        results_dir = RESULTS_DIR
+    if figures_dir is None:
+        figures_dir = FIGURES_DIR
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    results_dir = Path(results_dir)
+    figures_dir = Path(figures_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
 
     with open(metadata_path) as f:
         metadata = json.load(f)
@@ -311,24 +324,27 @@ def run_cka_experiment(
             "rewriting_events": all_rewriting[phenom],
         }
 
-    with open(RESULTS_DIR / "cka_results.json", "w") as f:
+    results_path = results_dir / results_filename
+    with open(results_path, "w") as f:
         json.dump(results_data, f, indent=2)
-    print(f"\nResults saved to {RESULTS_DIR / 'cka_results.json'}")
+    print(f"\nResults saved to {results_path}")
 
     # ── Generate plots ──
+    suffix = f"_{label}" if label else ""
+
     # 1. Full corpus CKA heatmap
-    plot_cka_heatmap(full_cka_matrix, save_path=FIGURES_DIR / "full_cka_heatmap.png")
+    plot_cka_heatmap(full_cka_matrix, save_path=figures_dir / f"full_cka_heatmap{suffix}.png")
 
     # 2. Per-phenomenon CKA heatmaps
     for phenom, matrix in all_cka_matrices.items():
-        plot_cka_heatmap(matrix, save_path=FIGURES_DIR / f"cka_heatmap_{phenom}.png")
+        plot_cka_heatmap(matrix, save_path=figures_dir / f"cka_heatmap_{phenom}{suffix}.png")
 
     # 3. Adjacent CKA curves overlaid
-    plot_adjacent_cka_curves(all_adjacent, save_path=FIGURES_DIR / "adjacent_cka_curves.png")
+    plot_adjacent_cka_curves(all_adjacent, save_path=figures_dir / f"adjacent_cka_curves{suffix}.png")
 
-    # 4. CKA vs probing overlay
+    # 4. CKA vs probing overlay (only meaningful for the base run)
     exp1_path = Path(__file__).resolve().parents[2] / "results" / "exp1_probing" / "probing_results.json"
-    plot_cka_vs_probing(all_adjacent, exp1_path, save_path=FIGURES_DIR / "cka_vs_probing.png")
+    plot_cka_vs_probing(all_adjacent, exp1_path, save_path=figures_dir / f"cka_vs_probing{suffix}.png")
 
     return results_data
 

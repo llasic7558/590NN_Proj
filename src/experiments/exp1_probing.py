@@ -29,6 +29,10 @@ def run_probing_experiment(
     metadata_path: Path = None,
     pooling: str = "cls",
     compute_selectivity: bool = True,
+    results_dir: Path = None,
+    figures_dir: Path = None,
+    results_filename: str = "probing_results.json",
+    label: str = None,
 ):
     """
     Run layer-wise probing across all phenomena.
@@ -38,13 +42,23 @@ def run_probing_experiment(
       2. For each phenomenon × layer, train a linear probe
       3. Optionally compute control task selectivity
       4. Save results and generate plots
+
+    `results_dir` / `figures_dir` override the default Exp 1 output paths,
+    used by Exp 4 to write fine-tuned-model results without clobbering
+    the base-model probing results.
     """
     if hidden_states_dir is None:
         hidden_states_dir = PROCESSED_DIR / "hidden_states"
     if metadata_path is None:
         metadata_path = hidden_states_dir / "metadata.json"
+    if results_dir is None:
+        results_dir = RESULTS_DIR
+    if figures_dir is None:
+        figures_dir = Path(__file__).resolve().parents[2] / "figures" / "exp1"
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    results_dir = Path(results_dir)
+    figures_dir = Path(figures_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     with open(metadata_path) as f:
         metadata = json.load(f)
@@ -167,16 +181,21 @@ def run_probing_experiment(
             for r in results
         ]
 
-    with open(RESULTS_DIR / "probing_results.json", "w") as f:
+    results_path = results_dir / results_filename
+    with open(results_path, "w") as f:
         json.dump(results_data, f, indent=2)
-    print(f"\nResults saved to {RESULTS_DIR / 'probing_results.json'}")
+    print(f"\nResults saved to {results_path}")
 
     # Generate plots
-    figures_dir = Path(__file__).resolve().parents[2] / "figures" / "exp1"
     figures_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"_{label}" if label else ""
 
-    plot_layer_accuracy_curves(all_results, save_path=figures_dir / "layer_accuracy_curves.png")
-    plot_probing_heatmap(all_results, save_path=figures_dir / "probing_heatmap.png")
+    plot_layer_accuracy_curves(
+        all_results, save_path=figures_dir / f"layer_accuracy_curves{suffix}.png"
+    )
+    plot_probing_heatmap(
+        all_results, save_path=figures_dir / f"probing_heatmap{suffix}.png"
+    )
 
     return all_results
 
