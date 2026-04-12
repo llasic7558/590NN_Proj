@@ -20,14 +20,24 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 
 
-def load_model(model_name: str = "bert-base-uncased"):
-    """Load BERT model and tokenizer, set to eval mode."""
-    tokenizer = BertTokenizer.from_pretrained(model_name)
-    model = BertModel.from_pretrained(model_name, output_hidden_states=True, output_attentions=True)
+def load_model(model_name_or_path: str = "bert-base-uncased", tokenizer_name: str = None):
+    """Load BERT model and tokenizer, set to eval mode.
+
+    `model_name_or_path` may be a HuggingFace name or a local checkpoint
+    directory (e.g. a fine-tuned BertForSequenceClassification). When loading
+    from a fine-tuned classifier checkpoint, only the BERT body is kept;
+    HuggingFace will warn about unused classifier weights, which is expected.
+    """
+    if tokenizer_name is None:
+        tokenizer_name = "bert-base-uncased"
+    tokenizer = BertTokenizer.from_pretrained(tokenizer_name)
+    model = BertModel.from_pretrained(
+        model_name_or_path, output_hidden_states=True, output_attentions=True
+    )
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    print(f"Loaded {model_name} on {device}")
+    print(f"Loaded {model_name_or_path} on {device}")
     return model, tokenizer, device
 
 
@@ -64,7 +74,13 @@ def extract_single(model, tokenizer, sentence: str, device: torch.device) -> dic
     }
 
 
-def extract_corpus(corpus_path: str = None, output_dir: str = None, batch_log_every: int = 100):
+def extract_corpus(
+    corpus_path: str = None,
+    output_dir: str = None,
+    model_name_or_path: str = "bert-base-uncased",
+    tokenizer_name: str = None,
+    batch_log_every: int = 100,
+):
     """
     Extract hidden states for the full minimal-pair corpus.
 
@@ -74,6 +90,10 @@ def extract_corpus(corpus_path: str = None, output_dir: str = None, batch_log_ev
         - good_attn:   (12, 12, seq_len_good, seq_len_good)
         - bad_attn:    (12, 12, seq_len_bad, seq_len_bad)
     And a metadata JSON with tokens and labels.
+
+    Pass `model_name_or_path` to extract from a fine-tuned checkpoint
+    (e.g. `checkpoints/bert-cola/`) and `output_dir` to keep its hidden
+    states separate from the base model's.
     """
     if corpus_path is None:
         corpus_path = PROCESSED_DIR / "minimal_pairs.json"
@@ -86,7 +106,7 @@ def extract_corpus(corpus_path: str = None, output_dir: str = None, batch_log_ev
     with open(corpus_path) as f:
         corpus = json.load(f)
 
-    model, tokenizer, device = load_model()
+    model, tokenizer, device = load_model(model_name_or_path, tokenizer_name)
 
     metadata_all = []
 

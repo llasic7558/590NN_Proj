@@ -8,4 +8,6 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 tqdm>=4.65.0
 scipy>=1.11.0
+spacy>=3.7.0
+# Run once after `pip install`: python -m spacy download en_core_web_sm
 # Optional: umap-learn>=0.5.3 (requires llvmlite — install separately with: brew install llvm && pip install llvmlite umap-learn)
