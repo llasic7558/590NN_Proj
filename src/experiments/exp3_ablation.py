@@ -223,24 +223,41 @@ def plot_ablation_heatmap(
     ablation_results: dict,
     phenom: str,
     save_path: Path = None,
+    vmin: float = None,
+    vmax: float = None,
+    baseline_acc: float = None,
 ):
     """
     Heatmap of accuracy drop: rows=layers, columns=heads.
+
+    `vmin`/`vmax` should be set to a shared scale across phenomena so that
+    colors are comparable between plots. If left None, the scale is derived
+    from the data, which can make tiny effects look as severe as large ones.
     """
     grid = np.zeros((NUM_LAYERS, NUM_HEADS))
     for (layer, head), data in ablation_results.items():
         grid[layer, head] = data["acc_drop"]
+
+    if vmax is None:
+        vmax = float(np.max(np.abs(grid)))
+        vmax = max(vmax, 1e-6)
+    if vmin is None:
+        vmin = -vmax
 
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(
         grid, annot=True, fmt=".3f", cmap="RdYlBu_r",
         xticklabels=[f"H{h}" for h in range(NUM_HEADS)],
         yticklabels=[f"L{l+1}" for l in range(NUM_LAYERS)],
-        ax=ax, center=0,
+        ax=ax, center=0, vmin=vmin, vmax=vmax,
     )
     ax.set_xlabel("Attention Head")
     ax.set_ylabel("Layer")
-    ax.set_title(f"Ablation Impact on {phenom.capitalize()} Probing\n(Accuracy drop: positive = head matters)")
+    title = f"Ablation Impact on {phenom.capitalize()} Probing\n(Accuracy drop: positive = head matters"
+    if baseline_acc is not None:
+        title += f"; baseline acc = {baseline_acc:.3f}"
+    title += f"; color scale ±{vmax:.3f})"
+    ax.set_title(title)
 
     plt.tight_layout()
     if save_path:
@@ -257,11 +274,31 @@ def plot_top_heads(
 ):
     """
     Bar chart of the top N most important heads across all phenomena.
+
+    Uses a shared x-axis range across subplots so that bar lengths are
+    directly comparable between phenomena (otherwise a 0.005 drop in one
+    phenomenon can visually appear larger than a 0.05 drop in another).
     """
     phenomena = sorted(all_ablation.keys())
-    fig, axes = plt.subplots(1, len(phenomena), figsize=(6 * len(phenomena), 5))
+    fig, axes = plt.subplots(
+        1, len(phenomena), figsize=(6 * len(phenomena), 5), sharex=True,
+    )
     if len(phenomena) == 1:
         axes = [axes]
+
+    # Compute shared x-axis range from the union of top-N drops across
+    # phenomena, so every subplot uses the same scale.
+    global_max = 0.0
+    global_min = 0.0
+    for phenom in phenomena:
+        results = all_ablation[phenom]
+        drops = [d["acc_drop"] for _, d in results.items()]
+        if drops:
+            global_max = max(global_max, max(drops))
+            global_min = min(global_min, min(drops))
+    pad = max(0.005, 0.05 * (global_max - global_min))
+    x_lo = global_min - pad
+    x_hi = global_max + pad
 
     for ax, phenom in zip(axes, phenomena):
         results = all_ablation[phenom]
@@ -276,11 +313,19 @@ def plot_top_heads(
         ax.set_yticks(range(len(labels)))
         ax.set_yticklabels(labels)
         ax.set_xlabel("Accuracy Drop")
-        ax.set_title(f"{phenom.capitalize()}")
+        ax.set_title(f"{phenom.capitalize()} (max drop = {max(drops):.3f})")
         ax.invert_yaxis()
-        ax.axvline(x=0.02, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
+        ax.axvline(x=0.02, color="red", linestyle="--", alpha=0.5, linewidth=0.8,
+                   label="0.02 threshold")
+        ax.axvline(x=0, color="black", linewidth=0.6, alpha=0.6)
+        ax.set_xlim(x_lo, x_hi)
+        ax.legend(fontsize=7, loc="lower right")
 
-    fig.suptitle(f"Top {top_n} Most Important Attention Heads per Phenomenon", fontsize=13)
+    fig.suptitle(
+        f"Top {top_n} Most Important Attention Heads per Phenomenon "
+        f"(shared x-axis: {x_lo:.3f} to {x_hi:.3f})",
+        fontsize=13,
+    )
     plt.tight_layout()
     if save_path:
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,11 +455,27 @@ def run_ablation_experiment(
     print(f"\nResults saved to {RESULTS_DIR / 'ablation_results.json'}")
 
     # ── Generate plots ──
-    # 1. Per-phenomenon heatmaps
-    for phenom, results in all_ablation.items():
-        plot_ablation_heatmap(results, phenom, save_path=FIGURES_DIR / f"ablation_heatmap_{phenom}.png")
+    # Shared color scale across all per-phenomenon heatmaps so they're
+    # visually comparable. Without this, each plot auto-scales and a 0.003
+    # drop looks as red as a 0.05 drop.
+    global_vmax = 0.0
+    for results in all_ablation.values():
+        for data in results.values():
+            global_vmax = max(global_vmax, abs(data["acc_drop"]))
+    global_vmax = max(global_vmax, 1e-6)
 
-    # 2. Top heads bar chart
+    # 1. Per-phenomenon heatmaps (shared scale)
+    for phenom, results in all_ablation.items():
+        any_entry = next(iter(results.values()))
+        baseline_acc = any_entry.get("baseline_acc")
+        plot_ablation_heatmap(
+            results, phenom,
+            save_path=FIGURES_DIR / f"ablation_heatmap_{phenom}.png",
+            vmin=-global_vmax, vmax=global_vmax,
+            baseline_acc=baseline_acc,
+        )
+
+    # 2. Top heads bar chart (shared x-axis across phenomena)
     plot_top_heads(all_ablation, top_n=15, save_path=FIGURES_DIR / "top_heads.png")
 
     return all_ablation
