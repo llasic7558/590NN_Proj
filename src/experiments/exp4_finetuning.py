@@ -24,6 +24,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+import seaborn as sns
+
 import torch
 from transformers import (
     BertForSequenceClassification,
@@ -288,6 +290,161 @@ def plot_cka_3way(save_path: Path = None):
     plt.close()
 
 
+def _cka_matrices_available(runs: dict) -> bool:
+    """Check that every loaded CKA run has the full 13×13 matrices saved."""
+    for r in runs.values():
+        if "cka_matrix" not in r.get("full_corpus", {}):
+            return False
+        for phenom_data in r.get("per_phenomenon", {}).values():
+            if "cka_matrix" not in phenom_data:
+                return False
+    return True
+
+
+def plot_cka_matrix_3way(save_path: Path = None):
+    """
+    Full pairwise CKA matrix heatmaps (like Exp 2's `plot_cka_heatmap`),
+    laid out as one row per phenomenon × three columns (base / CoLA / SST-2),
+    plus a final "full corpus" row.
+
+    This makes it easy to eyeball where fine-tuning reshapes the
+    layer-by-layer geometry vs where it's preserved.
+    """
+    runs = {label: _load_cka(label) for label in MODEL_LABELS}
+
+    if not _cka_matrices_available(runs):
+        print("  Skipping CKA matrix 3-way heatmap: full cka_matrix not present "
+              "in saved results. Re-run the CKA step (run_cka_experiment) so "
+              "matrices are persisted to JSON.")
+        return
+
+    phenomena = sorted(set.intersection(
+        *[set(r["per_phenomenon"].keys()) for r in runs.values()]
+    ))
+    rows = phenomena + ["full_corpus"]
+
+    n_rows = len(rows)
+    n_cols = len(MODEL_LABELS)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(4.8 * n_cols, 4.2 * n_rows),
+        squeeze=False,
+    )
+
+    for r, row_key in enumerate(rows):
+        for c, label in enumerate(MODEL_LABELS):
+            if row_key == "full_corpus":
+                matrix = np.array(runs[label]["full_corpus"]["cka_matrix"])
+            else:
+                matrix = np.array(runs[label]["per_phenomenon"][row_key]["cka_matrix"])
+
+            ax = axes[r][c]
+            sns.heatmap(
+                matrix, annot=True, fmt=".2f", cmap="coolwarm",
+                xticklabels=range(matrix.shape[1]),
+                yticklabels=range(matrix.shape[0]),
+                ax=ax, vmin=0, vmax=1, cbar=(c == n_cols - 1),
+                annot_kws={"fontsize": 6},
+            )
+            ax.set_xlabel("Layer")
+            if c == 0:
+                ax.set_ylabel(f"{row_key}\nLayer")
+            else:
+                ax.set_ylabel("Layer")
+            ax.set_title(f"{label} — {row_key}")
+
+    fig.suptitle(
+        "Pairwise CKA matrices: base vs CoLA vs SST-2 (rows = phenomena)",
+        fontsize=14, y=1.0,
+    )
+    plt.tight_layout()
+    if save_path:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved: {save_path}")
+    plt.close()
+
+
+def plot_cka_matrix_diff(save_path: Path = None):
+    """
+    Difference heatmaps: (CoLA − base) and (SST-2 − base) of the pairwise
+    CKA matrices, one row per phenomenon (plus full corpus).
+
+    Diverging colormap centered on zero, with a shared symmetric scale
+    across all sub-plots so cell colors are directly comparable. Red =
+    fine-tuned model has *higher* between-layer similarity than base;
+    blue = lower.
+    """
+    runs = {label: _load_cka(label) for label in MODEL_LABELS}
+
+    if not _cka_matrices_available(runs):
+        print("  Skipping CKA matrix diff heatmap: full cka_matrix not present "
+              "in saved results. Re-run the CKA step (run_cka_experiment) so "
+              "matrices are persisted to JSON.")
+        return
+
+    phenomena = sorted(set.intersection(
+        *[set(r["per_phenomenon"].keys()) for r in runs.values()]
+    ))
+    rows = phenomena + ["full_corpus"]
+    diff_labels = [l for l in MODEL_LABELS if l != "base"]
+
+    def get_matrix(label, row_key):
+        if row_key == "full_corpus":
+            return np.array(runs[label]["full_corpus"]["cka_matrix"])
+        return np.array(runs[label]["per_phenomenon"][row_key]["cka_matrix"])
+
+    # Shared symmetric color scale across every diff cell
+    global_vmax = 0.0
+    diffs = {}
+    for row_key in rows:
+        base_m = get_matrix("base", row_key)
+        for label in diff_labels:
+            d = get_matrix(label, row_key) - base_m
+            diffs[(row_key, label)] = d
+            global_vmax = max(global_vmax, float(np.max(np.abs(d))))
+    global_vmax = max(global_vmax, 1e-6)
+
+    n_rows = len(rows)
+    n_cols = len(diff_labels)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(4.8 * n_cols, 4.2 * n_rows),
+        squeeze=False,
+    )
+
+    for r, row_key in enumerate(rows):
+        for c, label in enumerate(diff_labels):
+            d = diffs[(row_key, label)]
+            ax = axes[r][c]
+            sns.heatmap(
+                d, annot=True, fmt=".2f", cmap="RdBu_r",
+                xticklabels=range(d.shape[1]),
+                yticklabels=range(d.shape[0]),
+                ax=ax, vmin=-global_vmax, vmax=global_vmax,
+                center=0, cbar=(c == n_cols - 1),
+                annot_kws={"fontsize": 6},
+            )
+            ax.set_xlabel("Layer")
+            if c == 0:
+                ax.set_ylabel(f"{row_key}\nLayer")
+            else:
+                ax.set_ylabel("Layer")
+            ax.set_title(f"{label} − base — {row_key}")
+
+    fig.suptitle(
+        f"CKA matrix differences vs base BERT "
+        f"(shared scale ±{global_vmax:.2f}; red = fine-tuned more similar than base)",
+        fontsize=13, y=1.0,
+    )
+    plt.tight_layout()
+    if save_path:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved: {save_path}")
+    plt.close()
+
+
 def plot_divergence_from_base(save_path: Path = None):
     """
     For each phenomenon, plot (cola - base) and (sst2 - base) probing
@@ -325,11 +482,136 @@ def plot_divergence_from_base(save_path: Path = None):
     plt.close()
 
 
+def plot_finetuning_summary(save_path: Path = None):
+    """
+    Single composite figure that consolidates the fine-tuning story:
+
+      - Top panel (full width): Δ probing accuracy vs base, per layer.
+        Bold lines = mean over phenomena (CoLA−base, SST-2−base);
+        thin lines = each phenomenon individually (low alpha).
+        This is the headline panel — under the proposal's prediction,
+        CoLA's curve should bow upward in the middle layers while
+        SST-2's stays near zero.
+
+      - Middle row (3 cols): probing accuracy per phenomenon, base vs
+        CoLA vs SST-2 overlaid.
+
+      - Bottom row (3 cols): adjacent-layer CKA per phenomenon, same
+        three models overlaid.
+
+    All three views share a consistent color scheme (model = color,
+    phenomenon = subplot), so the same evidence is presented at three
+    levels of aggregation in one image.
+    """
+    import matplotlib.gridspec as gridspec
+
+    probing = {label: _load_probing(label) for label in MODEL_LABELS}
+    cka = {label: _load_cka(label) for label in MODEL_LABELS}
+
+    phenomena = sorted(set.intersection(*[set(r.keys()) for r in probing.values()]))
+    n_phen = len(phenomena)
+    layer_axis = np.arange(13)
+
+    # ── Compute deltas vs base for the headline panel ──
+    base_probing = {p: np.array([r["accuracy"] for r in probing["base"][p]]) for p in phenomena}
+    cola_delta = {p: np.array([r["accuracy"] for r in probing["cola"][p]]) - base_probing[p] for p in phenomena}
+    sst2_delta = {p: np.array([r["accuracy"] for r in probing["sst2"][p]]) - base_probing[p] for p in phenomena}
+    cola_stack = np.stack([cola_delta[p] for p in phenomena])  # (n_phen, n_layers)
+    sst2_stack = np.stack([sst2_delta[p] for p in phenomena])
+
+    fig = plt.figure(figsize=(6 * max(n_phen, 3), 14))
+    gs = gridspec.GridSpec(
+        3, n_phen,
+        figure=fig,
+        height_ratios=[1.4, 1.0, 1.0],
+        hspace=0.45,
+        wspace=0.25,
+    )
+
+    # ── Top: headline divergence panel ──
+    ax_head = fig.add_subplot(gs[0, :])
+    ax_head.axhline(0, color="black", linewidth=0.8)
+
+    # Individual phenomenon lines (thin, low alpha) for transparency
+    for p in phenomena:
+        ax_head.plot(layer_axis, cola_delta[p], color=MODEL_COLORS["cola"],
+                     alpha=0.35, linewidth=1.2, linestyle="--")
+        ax_head.plot(layer_axis, sst2_delta[p], color=MODEL_COLORS["sst2"],
+                     alpha=0.35, linewidth=1.2, linestyle="--")
+
+    # Bold mean lines
+    cola_mean = cola_stack.mean(axis=0)
+    sst2_mean = sst2_stack.mean(axis=0)
+    ax_head.plot(layer_axis, cola_mean, color=MODEL_COLORS["cola"], marker="o",
+                 linewidth=2.8, label="CoLA − base (mean over phenomena)")
+    ax_head.plot(layer_axis, sst2_mean, color=MODEL_COLORS["sst2"], marker="s",
+                 linewidth=2.8, label="SST-2 − base (mean over phenomena)")
+
+    ax_head.set_xlabel("BERT Layer")
+    ax_head.set_ylabel("Δ probing accuracy vs base")
+    ax_head.set_xticks(layer_axis)
+    ax_head.grid(True, alpha=0.3)
+    ax_head.legend(loc="best")
+    ax_head.set_title(
+        "Fine-tuning shifts probing accuracy: CoLA bows upward in middle layers; "
+        "SST-2 stays flat or below base\n"
+        "(dashed = per-phenomenon, solid = mean across phenomena)",
+        fontsize=12,
+    )
+
+    # ── Middle row: per-phenomenon probing overlays ──
+    for col, phenom in enumerate(phenomena):
+        ax = fig.add_subplot(gs[1, col])
+        for label in MODEL_LABELS:
+            ys = [r["accuracy"] for r in probing[label][phenom]]
+            ax.plot(layer_axis, ys, marker="o", color=MODEL_COLORS[label],
+                    linewidth=2, label=label)
+        ax.set_title(f"Probing — {phenom}")
+        ax.set_xlabel("BERT Layer")
+        if col == 0:
+            ax.set_ylabel("Probing accuracy")
+        ax.set_ylim(0.3, 1.05)
+        ax.set_xticks(layer_axis)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    # ── Bottom row: per-phenomenon adjacent-CKA overlays ──
+    for col, phenom in enumerate(phenomena):
+        ax = fig.add_subplot(gs[2, col])
+        for label in MODEL_LABELS:
+            adj = cka[label]["per_phenomenon"][phenom]["adjacent_cka"]
+            xs = list(range(len(adj)))
+            ax.plot(xs, adj, marker="o", color=MODEL_COLORS[label],
+                    linewidth=2, label=label)
+        ax.set_title(f"Adjacent CKA — {phenom}")
+        ax.set_xlabel("Layer transition")
+        if col == 0:
+            ax.set_ylabel("Adjacent CKA")
+        ax.set_ylim(0, 1.05)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([f"{i}→{i+1}" for i in xs], rotation=45, fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    fig.suptitle(
+        "Exp 4 summary: fine-tuning effect across base / CoLA / SST-2",
+        fontsize=14, y=0.995,
+    )
+    if save_path:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved: {save_path}")
+    plt.close()
+
+
 def compare_finetuned_models():
     """Generate the 3-way overlay plots and a small text summary."""
     plot_probing_3way(save_path=FIGURES_DIR / "probing_3way.png")
     plot_cka_3way(save_path=FIGURES_DIR / "cka_3way.png")
+    plot_cka_matrix_3way(save_path=FIGURES_DIR / "cka_matrix_3way.png")
+    plot_cka_matrix_diff(save_path=FIGURES_DIR / "cka_matrix_diff.png")
     plot_divergence_from_base(save_path=FIGURES_DIR / "probing_divergence.png")
+    plot_finetuning_summary(save_path=FIGURES_DIR / "finetuning_summary.png")
 
     # Text summary: peak layer per (model, phenomenon)
     runs = {label: _load_probing(label) for label in MODEL_LABELS}
